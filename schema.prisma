@@ -1,0 +1,122 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { lessons as apiLessons, tasks as apiTasks, leaderboard as apiLeaderboard, weekly as apiWeekly, me as apiMe, register, login, logout, submitTask, createTask, classroom as apiClassroom, updateProfile } from './api.js';
+
+const initialQuestionnaire = { favoriteTopic:'', experience:'', goal:'', hobby:'' };
+
+function Tag({ children, tone='' }){ return <span className={`tag ${tone}`}>{children}</span>; }
+
+function Topbar({ view, setView, user, onAuthClick }){
+  return <header className="topbar">
+    <div className="brand"><div className="logo">S</div><div><div className="brandTitle">ScratchLearn</div><div className="brandSub">Розширена навчальна платформа</div></div></div>
+    <nav className="nav">
+      {['theory','practice','profile','leaderboard'].map(v => <button key={v} className={`navBtn ${view===v?'active':''}`} onClick={()=>setView(v)}>{({theory:'Уроки',practice:'Практика',profile:'Кабінет',leaderboard:'Рейтинг'})[v]}</button>)}
+      {user?.role==='teacher' && <button className={`navBtn ${view==='teacher'?'active':''}`} onClick={()=>setView('teacher')}>Вчитель</button>}
+    </nav>
+    <div className="topActions">
+      <a className="ghost" href="https://scratch.mit.edu/projects/editor/" target="_blank" rel="noreferrer">Відкрити Scratch</a>
+      <button className="primary" onClick={onAuthClick}>{user ? `Вийти (${user.name})` : 'Увійти / Реєстрація'}</button>
+    </div>
+  </header>;
+}
+
+function AuthModal({ open, onClose, onLogin, onRegister }){
+  const [mode, setMode] = useState('login');
+  const [name, setName] = useState('');
+  const [password, setPassword] = useState('');
+  const [role, setRole] = useState('student');
+  const [msg, setMsg] = useState('');
+  if(!open) return null;
+  const submit = async () => {
+    setMsg('');
+    try{
+      if(mode==='login') await onLogin(name, password); else await onRegister(name, password, role);
+      onClose();
+    }catch(e){ setMsg(e.message); }
+  };
+  return <div className="modalWrap"><div className="modalBackdrop" onClick={onClose}/><div className="modalCard smallCard"><h3>{mode==='login'?'Вхід':'Реєстрація'}</h3><div className="field"><label>Логін</label><input value={name} onChange={e=>setName(e.target.value)} /></div><div className="field"><label>Пароль</label><input type="password" value={password} onChange={e=>setPassword(e.target.value)} /></div>{mode==='register' && <div className="field"><label>Роль</label><select value={role} onChange={e=>setRole(e.target.value)}><option value="student">Учень</option><option value="teacher">Вчитель</option></select></div>}{msg && <div className="notice">{msg}</div>}<div className="modalActions"><button className="ghost" onClick={()=>setMode(mode==='login'?'register':'login')}>{mode==='login'?'Потрібна реєстрація?':'У мене вже є акаунт'}</button><button className="primary" onClick={submit}>{mode==='login'?'Увійти':'Зареєструватися'}</button></div></div></div>;
+}
+
+function Hero({ user, weekly }){
+  return <section className="hero"><div><h1>Інтерактивне навчання Scratch</h1><p>Платформа містить розширений теоретичний курс, практичні завдання, рейтинг класу, профіль учня та щотижневі виклики з автоматичною генерацією.</p><div className="tagRow"><Tag>12+ уроків</Tag><Tag>Практичні завдання</Tag><Tag>Рейтинг класу</Tag><Tag>Щотижневий виклик</Tag></div></div><div className="heroCard"><div className="heroStat">{user ? `Рівень ${user.level || 1}` : 'Увійдіть для прогресу'}</div><div className="muted">{weekly ? weekly.title : 'Щотижневе завдання з’явиться після входу.'}</div></div></section>;
+}
+
+function Theory({ lessons, selectedLesson, setSelectedLesson, setView }){
+  if(selectedLesson){
+    return <div className="card lessonView"><div className="headerRow"><div><h2>{selectedLesson.title}</h2><div className="muted">{selectedLesson.minutes} хвилин</div></div><button className="ghost" onClick={()=>setSelectedLesson(null)}>← До всіх уроків</button></div><p className="lead">{selectedLesson.summary}</p><div className="split"><div><h3>Теорія</h3><p>{selectedLesson.theoryText}</p><div className="tagRow">{selectedLesson.bullets.map((b,i)=><Tag key={i}>{b}</Tag>)}</div></div><div><h3>Мініпрезентація</h3><div className="slides">{selectedLesson.presentation.map((s,i)=><div className="slide" key={i}><div className="slideNo">Слайд {i+1}</div><div>{s}</div></div>)}</div></div></div><div className="actions"><a className="ghost" href={selectedLesson.scratchLink} target="_blank" rel="noreferrer">Відкрити Scratch</a><button className="primary" onClick={()=>setView('practice')}>Перейти до практики</button></div></div>;
+  }
+  return <div><h2 className="sectionTitle">Уроки та теорія</h2><div className="grid lessonsGrid">{lessons.map(l=><div className="card" key={l.id}><div className="headerRow"><div><h3>{l.title}</h3><div className="muted small">{l.minutes} хвилин</div></div><Tag>Урок</Tag></div><p>{l.summary}</p><div className="tagRow">{l.bullets.slice(0,3).map((b,i)=><Tag key={i}>{b}</Tag>)}</div><div className="actions"><button className="primary" onClick={()=>setSelectedLesson(l)}>Відкрити</button></div></div>)}</div></div>;
+}
+
+function WeeklyCard({ weekly }){
+  if(!weekly) return null;
+  return <div className="weekly card"><div className="headerRow"><div><h3>{weekly.title}</h3><div className="muted small">{weekly.weekKey}</div></div><Tag tone={weekly._wkDone ? 'green' : 'amber'}>{weekly._wkDone ? 'Бонус уже отримано' : `Бонус +${weekly.bonusPoints}`}</Tag></div><p>{weekly.text}</p><ul className="checklistStatic">{weekly.checklist.map((c,i)=><li key={i}>{c}</li>)}</ul><div className="muted small">Порада: {weekly.tip}</div></div>;
+}
+
+function Practice({ tasks, user, completedTaskIds, onOpenTask, weekly }){
+  return <div><h2 className="sectionTitle">Практичні завдання</h2>{!user && <div className="notice">Увійдіть, щоб проходити завдання, накопичувати бали та бачити щотижневі виклики.</div>}{weekly && <WeeklyCard weekly={weekly} />}<div className="grid tasksGrid">{tasks.map(t=>{const done = completedTaskIds.includes(t.id); return <div className="card" key={t.id}><div className="headerRow"><div><h3>{t.title}</h3><div className="muted small">{t.level} • {t.points} балів</div></div><Tag tone={done ? 'green' : 'blue'}>{done?'Виконано':'Доступно'}</Tag></div><p>{t.description}</p><div className="tagRow">{t.hints.slice(0,2).map((h,i)=><Tag key={i}>{h}</Tag>)}</div><div className="actions"><button className="primary" onClick={()=>onOpenTask(t)}>{done?'Переглянути':'Відкрити завдання'}</button></div></div>;})}</div></div>;
+}
+
+function TaskModal({ task, open, onClose, user, completedTaskIds, onSubmit }){
+  const [checked, setChecked] = useState({});
+  const [quizIndex, setQuizIndex] = useState(null);
+  const [projectLink, setProjectLink] = useState('');
+  const [result, setResult] = useState('');
+  useEffect(()=>{ setChecked({}); setQuizIndex(null); setProjectLink(''); setResult(''); }, [task?.id, open]);
+  if(!open || !task) return null;
+  const already = completedTaskIds.includes(task.id);
+  const checklistAll = task.checklist.every((_,i)=>checked[i]) || already;
+  const submit = async () => { try{ await onSubmit(task.id, checklistAll, quizIndex, projectLink); setResult('Завдання зараховано. Результат оновлено у вашому кабінеті.'); }catch(e){ setResult(e.message); } };
+  return <div className="modalWrap"><div className="modalBackdrop" onClick={onClose}/><div className="modalCard taskModal"><div className="headerRow"><div><h3>{task.title}</h3><div className="muted">{task.level} • {task.points} балів</div></div><button className="ghost" onClick={onClose}>✕</button></div><div className="taskContent"><div className="taskBlock"><p>{task.description}</p><div className="muted small">Підказки:</div><ul>{task.hints.map((h,i)=><li key={i}>{h}</li>)}</ul></div><div className="taskBlock"><h4>Чек-лист виконання</h4><div className="scrollArea">{task.checklist.map((c,i)=><label className="checkItem" key={i}><input type="checkbox" checked={already || !!checked[i]} disabled={already} onChange={()=>setChecked(prev=>({...prev,[i]:!prev[i]}))}/><span>{c}</span></label>)}</div></div><div className="taskBlock"><h4>Мінітест</h4><div className="quizQuestion">{task.quiz.q}</div><div className="scrollArea optionsArea">{task.quiz.options.map((o,i)=><label className="optionItem" key={i}><input type="radio" name="quiz" checked={quizIndex===i} disabled={already} onChange={()=>setQuizIndex(i)} /><span>{o}</span></label>)}</div></div><div className="taskBlock"><h4>Посилання на проєкт</h4><input value={projectLink} onChange={e=>setProjectLink(e.target.value)} placeholder="https://scratch.mit.edu/projects/..." /><div className="actions"><a className="ghost" href={task.scratchLink} target="_blank" rel="noreferrer">Відкрити Scratch</a><button className="primary" disabled={!user || already} onClick={submit}>Перевірити та зарахувати</button></div>{result && <div className={result.includes('зараховано')?'ok':'notice'}>{result}</div>}</div></div></div></div>;
+}
+
+function Profile({ user, onSaveProfile, onRefresh, tasksCount }){
+  const [form, setForm] = useState(null);
+  const [msg, setMsg] = useState('');
+  useEffect(()=>{ if(user) setForm({ className:user.className||'', birthDate:user.birthDate||'', school:user.school||'', about:user.about||'', questionnaire:{ ...initialQuestionnaire, ...(user.questionnaire||{}) } }); }, [user]);
+  if(!user) return <div><h2 className="sectionTitle">Кабінет учня</h2><div className="notice">Увійдіть, щоб побачити профіль, анкету та власну діагностику.</div></div>;
+  const save = async ()=>{ try{ setMsg(''); await onSaveProfile(form); setMsg('Профіль успішно оновлено.'); }catch(e){ setMsg(e.message); } };
+  return <div><h2 className="sectionTitle">Кабінет учня</h2><div className="grid profileGrid"><div className="card"><h3>Основна інформація</h3><div className="profileList"><div><b>Логін:</b> {user.name}</div><div><b>Клас:</b> {user.className || '—'}</div><div><b>Дата народження:</b> {user.birthDate || '—'}</div><div><b>Школа:</b> {user.school || '—'}</div><div><b>Про себе:</b> {user.about || '—'}</div></div><div className="kpiGrid"><div className="kpi"><div className="kpiValue">{user.points}</div><div className="muted small">Балів</div></div><div className="kpi"><div className="kpiValue">{user.level || 1}</div><div className="muted small">Рівень</div></div><div className="kpi"><div className="kpiValue">{user.completedCount || 0}/{tasksCount}</div><div className="muted small">Виконано</div></div></div><div className="tagRow">{(user.badges||[]).map((b,i)=><Tag key={i} tone="green">🏅 {b}</Tag>)}</div></div>{form && <div className="card"><h3>Анкета учня</h3><div className="field"><label>Клас</label><input value={form.className} onChange={e=>setForm({...form,className:e.target.value})} /></div><div className="field"><label>Дата народження</label><input type="date" value={form.birthDate} onChange={e=>setForm({...form,birthDate:e.target.value})} /></div><div className="field"><label>Школа</label><input value={form.school} onChange={e=>setForm({...form,school:e.target.value})} /></div><div className="field"><label>Цікавинки про себе</label><textarea value={form.about} onChange={e=>setForm({...form,about:e.target.value})} /></div><div className="field"><label>Улюблена тема</label><input value={form.questionnaire.favoriteTopic} onChange={e=>setForm({...form,questionnaire:{...form.questionnaire,favoriteTopic:e.target.value}})} /></div><div className="field"><label>Рівень досвіду</label><input value={form.questionnaire.experience} onChange={e=>setForm({...form,questionnaire:{...form.questionnaire,experience:e.target.value}})} /></div><div className="field"><label>Мета навчання</label><input value={form.questionnaire.goal} onChange={e=>setForm({...form,questionnaire:{...form.questionnaire,goal:e.target.value}})} /></div><div className="field"><label>Хобі</label><input value={form.questionnaire.hobby} onChange={e=>setForm({...form,questionnaire:{...form.questionnaire,hobby:e.target.value}})} /></div><div className="actions"><button className="ghost" onClick={onRefresh}>Оновити дані</button><button className="primary" onClick={save}>Зберегти анкету</button></div>{msg && <div className="ok">{msg}</div>}</div>}</div></div>;
+}
+
+function Leaderboard({ students }){
+  return <div><h2 className="sectionTitle">Рейтинг класу</h2><div className="card"><table className="table"><thead><tr><th>#</th><th>Учень</th><th>Клас</th><th>Школа</th><th>Бали</th><th>Рівень</th><th>Виконано</th></tr></thead><tbody>{students.map((s,i)=><tr key={s.id}><td>{i+1}</td><td>{s.name}</td><td>{s.className}</td><td>{s.school}</td><td>{s.points}</td><td>{s.level}</td><td>{s.completed}</td></tr>)}</tbody></table></div></div>;
+}
+
+function Teacher({ user, classroom, onCreate }){
+  const [form, setForm] = useState({ title:'', level:'Початковий', points:80, description:'', checklist:'', quizQ:'', quizOpts:'', quizCorrect:1 });
+  const [msg, setMsg] = useState('');
+  if(!user) return <div className="notice">Увійдіть як вчитель.</div>;
+  if(user.role !== 'teacher') return <div className="notice">Цей розділ доступний лише для ролі «вчитель».</div>;
+  const submit = async ()=>{ try{ const opts = form.quizOpts.split('\n').map(x=>x.trim()).filter(Boolean); if(opts.length!==4) throw new Error('Потрібно 4 варіанти відповіді.'); const payload = { title:form.title, level:form.level, points:Number(form.points), description:form.description, checklist:form.checklist.split('\n').map(x=>x.trim()).filter(Boolean), quiz:{ q:form.quizQ, options:opts, correctIndex:Number(form.quizCorrect)-1 } }; await onCreate(payload); setMsg('Завдання додано успішно.'); setForm({ title:'', level:'Початковий', points:80, description:'', checklist:'', quizQ:'', quizOpts:'', quizCorrect:1 }); }catch(e){ setMsg(e.message); } };
+  return <div><h2 className="sectionTitle">Кабінет вчителя</h2><div className="grid teacherGrid"><div className="card"><h3>Додати практичне завдання</h3><div className="field"><label>Назва</label><input value={form.title} onChange={e=>setForm({...form,title:e.target.value})} /></div><div className="twoCols"><div className="field"><label>Рівень</label><select value={form.level} onChange={e=>setForm({...form,level:e.target.value})}><option>Початковий</option><option>Середній</option><option>Достатній</option><option>Високий</option></select></div><div className="field"><label>Бали</label><input type="number" value={form.points} onChange={e=>setForm({...form,points:e.target.value})} /></div></div><div className="field"><label>Опис</label><textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} /></div><div className="field"><label>Чек-лист (кожен пункт з нового рядка)</label><textarea value={form.checklist} onChange={e=>setForm({...form,checklist:e.target.value})} /></div><div className="field"><label>Питання тесту</label><input value={form.quizQ} onChange={e=>setForm({...form,quizQ:e.target.value})} /></div><div className="field"><label>Варіанти відповіді (4 рядки)</label><textarea value={form.quizOpts} onChange={e=>setForm({...form,quizOpts:e.target.value})} /></div><div className="field"><label>Правильний варіант (1–4)</label><input type="number" min="1" max="4" value={form.quizCorrect} onChange={e=>setForm({...form,quizCorrect:e.target.value})} /></div><div className="actions"><button className="primary" onClick={submit}>Додати завдання</button></div>{msg && <div className={msg.includes('успішно')?'ok':'notice'}>{msg}</div>}</div><div className="card"><h3>Зареєстрований клас</h3><table className="table compact"><thead><tr><th>Учень</th><th>Клас</th><th>Бали</th><th>Рівень</th><th>Виконано</th></tr></thead><tbody>{classroom.map(s=><tr key={s.id}><td>{s.name}</td><td>{s.className||'—'}</td><td>{s.points}</td><td>{s.level}</td><td>{s.completed}</td></tr>)}</tbody></table></div></div></div>;
+}
+
+export default function App(){
+  const [view, setView] = useState('theory');
+  const [authOpen, setAuthOpen] = useState(false);
+  const [user, setUser] = useState(null);
+  const [lessons, setLessons] = useState([]);
+  const [tasks, setTasks] = useState([]);
+  const [leaderboard, setLeaderboard] = useState([]);
+  const [classroom, setClassroom] = useState([]);
+  const [weekly, setWeekly] = useState(null);
+  const [selectedLesson, setSelectedLesson] = useState(null);
+  const [selectedTask, setSelectedTask] = useState(null);
+
+  const loadCommon = async ()=>{
+    const [ls, ts, lb] = await Promise.all([apiLessons(), apiTasks(), apiLeaderboard()]);
+    setLessons(ls); setTasks(ts); setLeaderboard(lb);
+  };
+  const loadMe = async ()=>{ try{ const me = await apiMe(); setUser(me); const wk = await apiWeekly(); setWeekly(wk); if(me.role==='teacher'){ const cls = await apiClassroom(); setClassroom(cls); } }catch{ setUser(null); setWeekly(null); setClassroom([]); } };
+
+  useEffect(()=>{ loadCommon(); loadMe(); }, []);
+
+  const doLogout = async ()=>{ if(user){ await logout(); setUser(null); setWeekly(null); setClassroom([]); } else setAuthOpen(true); };
+  const completedTaskIds = user?.completedTaskIds || [];
+
+  const handleSubmitTask = async (taskId, checklistAll, quizIndex, projectLink)=>{ const data = await submitTask(taskId, checklistAll, quizIndex, projectLink); if(data.user) setUser(data.user); const lb = await apiLeaderboard(); setLeaderboard(lb); const wk = await apiWeekly(); setWeekly(wk); if(user?.role==='teacher') setClassroom(await apiClassroom()); };
+  const handleCreateTask = async (payload)=>{ await createTask(payload); setTasks(await apiTasks()); };
+  const handleSaveProfile = async (payload)=>{ const updated = await updateProfile(payload); setUser(updated); setLeaderboard(await apiLeaderboard()); };
+
+  return <div className="appShell"><Topbar view={view} setView={setView} user={user} onAuthClick={doLogout} /><main className="main"><Hero user={user} weekly={weekly} />{view==='theory' && <Theory lessons={lessons} selectedLesson={selectedLesson} setSelectedLesson={setSelectedLesson} setView={setView} />}{view==='practice' && <Practice tasks={tasks} user={user} completedTaskIds={completedTaskIds} onOpenTask={setSelectedTask} weekly={weekly} />}{view==='profile' && <Profile user={user} onSaveProfile={handleSaveProfile} onRefresh={loadMe} tasksCount={tasks.length} />}{view==='leaderboard' && <Leaderboard students={leaderboard} />}{view==='teacher' && <Teacher user={user} classroom={classroom} onCreate={handleCreateTask} />}</main><TaskModal task={selectedTask} open={!!selectedTask} onClose={()=>setSelectedTask(null)} user={user} completedTaskIds={completedTaskIds} onSubmit={handleSubmitTask} /><AuthModal open={authOpen} onClose={()=>setAuthOpen(false)} onLogin={async(n,p)=>{ setUser(await login(n,p)); await loadMe(); }} onRegister={async(n,p,r)=>{ setUser(await register(n,p,r)); await loadMe(); }} /></div>;
+}
